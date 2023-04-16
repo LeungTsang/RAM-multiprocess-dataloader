@@ -4,6 +4,7 @@ import multiprocessing as mp
 import os
 import time
 import torch
+import torch.distributed as dist
 
 import detectron2.utils.comm as comm
 from detectron2.engine import launch
@@ -20,10 +21,11 @@ def worker(_, dataset: torch.utils.data.Dataset):
 
 
 def main():
+  dist.init_process_group(backend='nccl')
   monitor = MemoryMonitor()
   ds = DatasetFromList(TorchShmSerializedList(
       # Don't read data except for GPU worker 0! Otherwise we waste time and (maybe) RAM.
-      create_coco() if comm.get_local_rank() == 0 else []))
+      create_coco() if int(os.environ['LOCAL_RANK']) == 0 else []))
   print(monitor.table())
 
   mp.set_forkserver_preload(["torch"])
@@ -53,4 +55,5 @@ if __name__ == "__main__":
 
   # This uses "spawn" internally. To switch to forkserver, modifying
   # detectron2 source code is needed.
-  launch(main, num_gpus, dist_url="auto")
+  #launch(main, num_gpus, dist_url="auto")
+  main()

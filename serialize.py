@@ -9,6 +9,7 @@ import multiprocessing as mp
 import pickle
 import numpy as np
 import torch
+import os
 
 try:
     from detectron2.utils import comm
@@ -65,37 +66,36 @@ def local_scatter(array: Optional[List[Any]]):
     Args:
         array: Array with same size of #local workers.
     """
-    if comm.get_local_size() == 1:
+    if int(os.environ['LOCAL_WORLD_SIZE']) == 1:
         # Just one worker. Do nothing.
         return array[0]
-    if comm.get_local_rank() == 0:
-        assert len(array) == comm.get_local_size()
+    if int(os.environ['LOCAL_RANK']) == 0:
+        assert len(array) == int(os.environ['LOCAL_WORLD_SIZE'])
         comm.all_gather(array)
     else:
         all_data = comm.all_gather(None)
-        array = all_data[comm.get_rank() - comm.get_local_rank()]
-    return array[comm.get_local_rank()]
+        array = all_data[int(os.environ['RANK']) - int(os.environ['LOCAL_RANK'])]
+    return array[int(os.environ['LOCAL_RANK'])]
 
 
 # NOTE: https://github.com/facebookresearch/mobile-vision/pull/120
 # has another implementation that does not use tensors.
 class TorchShmSerializedList(TorchSerializedList):
     def __init__(self, lst: list):
-        if comm.get_local_rank() == 0:
+        if int(os.environ['LOCAL_RANK']) == 0:
             super().__init__(lst)
-        if comm.get_local_rank() == 0:
+        if int(os.environ['LOCAL_RANK']) == 0:
             # Move data to shared memory, obtain a handle to send to each local worker.
             # This is cheap because a tensor will only be moved to shared memory once.
-            handles = [None] + [
-              bytes(mp.reduction.ForkingPickler.dumps((self._addr, self._lst)))
-              for _ in range(comm.get_local_size() - 1)]
+            handles = [None] + [bytes(mp.reduction.ForkingPickler.dumps((self._addr, self._lst)))
+              for _ in range(int(os.environ['LOCAL_WORLD_SIZE']) - 1)]
         else:
             handles = None
         # Each worker receives the handle from local leader.
         handle = local_scatter(handles)
 
-        if comm.get_local_rank() > 0:
+        if int(os.environ['LOCAL_RANK']) > 0:
             # Materialize the tensor from shared memory.
             self._addr, self._lst = mp.reduction.ForkingPickler.loads(handle)
-            print(f"Worker {comm.get_rank()} obtains a dataset of length="
+            print(f"Worker {int(os.environ['RANK'])} obtains a dataset of length="
                   f"{len(self)} from its local leader.")
